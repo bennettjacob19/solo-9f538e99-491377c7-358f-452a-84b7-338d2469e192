@@ -1,0 +1,11 @@
+services:
+  demo:
+    build: .
+    image: rx-queue-switching-demo:latest
+    container_name: rx-queue-switching-demo
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      QUEUES: "${QUEUES:-2}"
+      MAX_PENDING_PER_FLOW: "${MAX_PENDING_PER_FLOW:-4}"
+    restart: unless-stopped
