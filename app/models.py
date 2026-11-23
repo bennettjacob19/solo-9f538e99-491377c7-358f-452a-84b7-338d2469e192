@@ -144,7 +144,10 @@ class DeliverRequest(BaseModel):
         1,
         ge=1,
         le=1000,
-        description="本次最多交付几个可交付报文；没有可交付的就提前结束",
+        description=(
+            "本次最多交付几个可交付报文；按流轮转，一条流每轮最多一个包。"
+            "没有可交付的就提前结束"
+        ),
     )
 
 
@@ -173,7 +176,9 @@ class DeliverResponse(BaseModel):
     delivered: List[DeliveredPacket] = Field(
         ..., description="本次交付给上层的报文，按交付先后排列"
     )
-    remaining: int = Field(..., ge=0, description="推进后该队列剩余的报文数")
+    remaining: int = Field(
+        ..., ge=0, description="推进后该队列剩余的报文数（含队头在别的队列的包）"
+    )
 
 
 class SwitchRequest(BaseModel):

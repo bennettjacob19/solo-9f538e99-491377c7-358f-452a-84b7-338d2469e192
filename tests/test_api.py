@@ -183,3 +183,71 @@ def test_reset(client):
     client.post("/reset")
     assert client.get("/egress").json()["egress"] == []
     assert client.get("/state").json()["streams"] == []
+
+
+def test_advance_rotates_between_flows_in_same_queue(client):
+    # 一条流持续可交付时，同一队列里其他流在它下一轮之前也各交付一包
+    for seq in range(1, 5):
+        send(client, "busy", seq, 0)
+    send(client, "other", 1, 0)
+
+    first = advance(client, 0, count=1).json()["delivered"]
+    assert [(d["flow_id"], d["seq"]) for d in first] == [("busy", 1)]
+
+    out = advance(client, 0, count=1).json()["delivered"]
+    assert [(d["flow_id"], d["seq"]) for d in out] == [("other", 1)]
+
+    out = advance(client, 0, count=1).json()["delivered"]
+    assert [(d["flow_id"], d["seq"]) for d in out] == [("busy", 2)]
+
+
+def test_smaller_seq_arrival_moves_readiness_to_its_queue(client):
+    send(client, "f1", 2, 1)
+    assert client.get("/queues").json()["queues"][1]["ready"] == 1
+
+    # 收进比当前队头更小的包 1：队头变成队列 0 上的包 1
+    send(client, "f1", 1, 0)
+    queues = client.get("/queues").json()["queues"]
+    assert queues[0]["ready"] == 1
+    assert queues[1]["ready"] == 0
+
+    assert advance(client, 1, count=10).json()["delivered"] == []
+    assert [d["seq"] for d in advance(client, 0, count=10).json()["delivered"]] == [1]
+    # 交付队头后立即按新队头重判：队列 1 又能交付包 2
+    assert [d["seq"] for d in advance(client, 1, count=10).json()["delivered"]] == [2]
+
+
+def test_remaining_counts_blocked_packets(client):
+    send(client, "f1", 1, 0)
+    send(client, "f1", 2, 1)
+    send(client, "f1", 3, 1)
+    out = advance(client, 1, count=10).json()
+    assert out["delivered"] == []
+    assert out["remaining"] == 2
+
+
+def test_same_backlog_split_advance_is_deterministic(client):
+    layout = [
+        ("a", 1, 0),
+        ("b", 1, 0),
+        ("a", 2, 0),
+        ("b", 2, 0),
+        ("a", 3, 0),
+        ("c", 1, 0),
+    ]
+    fresh = create_app(queues=2, max_pending=8)
+    with TestClient(fresh) as c2:
+        for flow_id, seq, queue_id in layout:
+            send(c2, flow_id, seq, queue_id)
+        one_call = advance(c2, 0, count=5).json()["delivered"]
+
+    with TestClient(create_app(queues=2, max_pending=8)) as c3:
+        for flow_id, seq, queue_id in layout:
+            send(c3, flow_id, seq, queue_id)
+        split = []
+        for _ in range(5):
+            split.extend(advance(c3, 0, count=1).json()["delivered"])
+
+    assert [(d["flow_id"], d["seq"]) for d in split] == [
+        (d["flow_id"], d["seq"]) for d in one_call
+    ]
